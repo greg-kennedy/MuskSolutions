@@ -1,33 +1,22 @@
 #!/usr/bin/env perl
-use strict;
-use warnings;
-
-# proper Unicode and JSON::PP
 use v5.014;
+use warnings;
 
 ###
 # A Twitter bot to generate fake Elon Musk tech solutions
 
-# fudge @INC
-use FindBin qw( $RealBin );
-use lib $RealBin;
-
 # Includes
+#  ensure path to cwd for opening config files
+use FindBin qw( $RealBin );
+
 # Decode JSON (config file, word banks)
 use JSON::PP qw( decode_json );
 
 # LWP::UserAgent (connect to remote URLs)
-use LWP::UserAgent;
-
-# Time::Piece to transform date/time returned by API calls to something we understand
-use Time::Piece;
+#use LWP::UserAgent;
 
 # Twitter posting
-use Net::Twitter::Lite::WithAPIv1_1;
-use Util;
-
-# Determining "blessed" status of objects
-use Scalar::Util 'blessed';
+use Twitter::API;
 
 ###############################################################
 ### CODE
@@ -39,6 +28,7 @@ use Scalar::Util 'blessed';
 # chooses a random element from an array
 sub pick { return $_[int(rand(@_))]; }
 
+# trim whitespace from string and return
 sub trim { my $s = shift; $s =~ s/^\s+|\s+$//g; return $s };
 
 # Decode JSON from a file (instead of a scalar)
@@ -60,10 +50,10 @@ sub decode_json_file
 #  Returns a reference to a list of hashes, containing title, description, and date published
 sub query_twitter
 {
-  my $nt = shift;
+  my $client = shift;
 
   # Get twitter trends for USA, excluding hashtags
-  my $trends = $nt->trends( { id => 23424977, exclude => 'hashtags' } );
+  my $trends = $client->trends_place( { id => 23424977, exclude => 'hashtags' } );
 
   # Pack Trends into news array
   my @news;
@@ -116,61 +106,33 @@ sub query_newsapi
 }
 =cut
 
-=pod
-# Analyze the news headlines.  See if there's anything interesting to talk about.
-my $topic;
-my $weight;
-
-foreach my $article (@$news) {
-  
-  # Look at the title for something to post about
-  #  try splitting on conjunctions
-  my @clauses = split /(?:,|;|\||\-|\s(?:and|but|for|nor|or|so|yet))\s/i, " $article->{title} ";
-
-  foreach my $clause (@clauses)
-  {
-    # split clause on preposition into phrase
-    my @phrases = split /\s(?:about|below|excepting|off|toward|above|beneath|for|on|under|across|beside|besides|from|onto|underneath|after|between|in|out|until|against|beyond|in front of|outside|up|along|but|inside|over|upon|among|by|in spite of|past|up to|around|concerning|instead of|regarding|with|at|despite|into|since|within|because of|down|like|through|without|before|during|near|throughout|with regard to|behind|except|of|to|with respect to)\s/i, " $clause ";
-    foreach my $phrase (@phrases)
-    {
-      # for now "weight" is just the longest clause
-      my $phrase_length = split /\s+/, $phrase;
-      if ($phrase_length > $weight) {
-        $weight = $phrase_length;
-        $topic = trim($phrase);
-      }
-    }
-  }
-}
-=cut
-
 ###############################################################
 # MAIN ENTRY POINT
 
 # Go read the config file
 my $config = decode_json_file "$RealBin/config.json";
 
-
 # Go read the data files
 my $data = decode_json_file "$RealBin/data.json";
 
 # Connect to Twitter
-my $nt = Net::Twitter::Lite::WithAPIv1_1->new(
+my $client = Twitter::API->new_with_traits(
+  traits              => [ qw( NormalizeBooleans DecodeHtmlEntities RetryOnError ApiMethods ) ],
   consumer_key        => $config->{consumer_key},
   consumer_secret     => $config->{consumer_secret},
   access_token        => $config->{access_token},
   access_token_secret => $config->{access_token_secret},
-  ssl                 => 1
 );
 
 # Get the latest trends
-# Connect to news API
 #  this calls a function accepting config, so you can replace with your own preferred news source
+
+# Connect to news API
 #my $news = query_newsapi($config);
 
 # Retrieve Twitter trends instead
 #  this is an alternative to newsapi
-my $news = query_twitter($nt);
+my $news = query_twitter($client);
 
 # choose a random thing to tweet about
 my $topic = pick(@$news)->{title};
@@ -201,9 +163,9 @@ $post =~ s/\s+/ /g;
 say $post;
 
 # Get my timeline.  This is just to see the replies back since I last posted.
-#my $status = $nt->mentions({ count => 1, trim_user => 1, exclude_replies => 1, include_rts => 0 })->[0];
+#my $status = $client->mentions({ count => 1, trim_user => 1, exclude_replies => 1, include_rts => 0 })->[0];
 
 ###
 # READY TO POST!!
 # Post!
-$nt->update( {status => $post} );
+$client->update( {status => $post} );
